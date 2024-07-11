@@ -133,5 +133,11 @@ dmypy.json
 # profiling
 .prof
 
-# IDE
-.vscode
+# VS Code IDE
+.vscode/
+*.code-workspace
+
+# Private Test file
+test.py
+test.csv
+
