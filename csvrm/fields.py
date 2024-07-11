@@ -1,4 +1,5 @@
 from datetime import date
+from .exceptions import ModelError
 
 
 # FIELD CLASS
@@ -12,9 +13,14 @@ class Field:
         self._value = self._default
 
     def __get__(self, instance, owner):
+        if instance._is_master():
+            raise ModelError("Cannot get multiple records")
         return self._value
 
     def __set__(self, instance, value):
+        if instance._is_master():
+            raise ModelError("Cannot set multiple records")
+
         self._value = value
 
     def __repr__(self):
