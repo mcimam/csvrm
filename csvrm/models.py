@@ -1,9 +1,11 @@
 import csv
 import logging
+
+from os.path import abspath
 from pathlib import Path
 
-from .fields import Field
 from .exceptions import ModelError
+from .fields import Field
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ class Model:
         """
 
         # Config Variable
-        self._filename = self._filename
+        self._filename = abspath(self._filename)
 
         # Runtime Variable
         self.__master = False
@@ -110,6 +112,7 @@ class Model:
         if not disable_create:
             self._ccreate_file()
 
+        self._records = []
         with open(self._filename, 'r') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
