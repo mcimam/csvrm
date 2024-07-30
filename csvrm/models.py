@@ -4,13 +4,13 @@ import logging
 from os.path import abspath
 from pathlib import Path
 
+
 from .exceptions import ModelError
 from .fields import Field
 
 logger = logging.getLogger(__name__)
 
 
-# MODEL CLASS
 class Model:
     """
     This is base model for csv relational mapping.
@@ -19,169 +19,168 @@ class Model:
         fields (Fields): Model fields
 
     """
-    # Instances variable
-    _fields = list()
-    _records = list()
+    # Class variable
+    _filename = False  # csv file location
+    _dialect = 'excel'  # csv dialect
+    _check = True  # csv check
 
-    def __init__(self, load=False, disable_create=False, **kwargs):
-        """
-        Paramaters:
-            load (bool) : load data when init class
-            disable_create(bool) : disable file creation if not found
-        """
+    _fields = list()  # list of fields
+    _master_records = list()  # master records
+    _lock = False  # transaction lock
 
-        # Config Variable
+    _id = 'id'  # PK Fields
+
+    def __init__(self, records: list[dict] = False, **kwargs):
+        """
+        Init file should set if current model is master or not
+        """
+        # This method is better to run in metaclass
+        # Or when class is register even if instace is not created yet
+
+        # Set filename to abs path
         self._filename = abspath(self._filename)
 
-        # Runtime Variable
-        self.__master = False
-        self._records = list()
-
-        # Build fields
+        # Handle fields register
         self._fields = list(map(lambda x: x[0], filter(
             lambda x: issubclass(type(x[1]), Field),
             list(type(self).__dict__.items())
         )))
 
-        # Treate object as idividual record or whole data
-        if load:
-            self.load(disable_create)
-        elif kwargs:
-            for key, value in kwargs.items():
-                if hasattr(self, key):
-                    setattr(self, key, value)
-            self._records.append(self)
+        ########################################################
 
-    def __iter__(self):
-        for i in self._records:
-            yield i
-
-    def __compile_output(self):
-        cname = self.__class__.__name__
-        if self.__master:
-            return f"{cname}(M)"
+        if records is False:
+            # Load record as master
+            # In this case _records is shallow copy of _master_records
+            self.load()
+            self._records = self._master_records
         else:
-            rdata = ""
-            for field in self._fields:
-                rdata += f"{field}={getattr(self, field, None).__repr__()},"
+            # Load record as non master
+            self._records = records
 
-            if len(rdata) > 80:
-                rdata = rdata[:80]
-
-            return f"{cname}({rdata})"
-
-    def __repr__(self):
-        return self.__compile_output()
-
-    def __str__(self):
-        return self.__compile_output()
+    # DUNDER Methods
+    def __iter__(self):
+        for rec in self._records:
+            yield type(self)([rec])
 
     def __getitem__(self, key):
         if isinstance(key, str):
             if len(self._records) > 1:
                 raise ModelError("Result has multiple instances")
-            return self.key
+            return getattr(self, key, None)
         elif isinstance(key, slice):
-            return self._records[key]
+            return type(self)(self._records[key])
+        elif isinstance(key, int):
+            return type(self)([self._records[key]])
         else:
-            return self._records[key]
+            raise ModelError("Invalid get item method")
 
-    def _is_master(self):
-        return self.__master
+    def __len__(self):
+        return len(self._records)
 
-    # READ WRITE METHOD
-    def _ccreate_file(self):
-        """ Create file if it not exist yet
+    # FILE Methods
+    def _check_file(self):
+        """ Check file if it not exist yet or invalid
         """
-        if Path(self._filename).is_file():
-            return
 
-        logger.warning("Warning: File not exist, try to create one")
-        with open(self._filename, 'w') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=self._fields)
-            writer.writeheader()
+        if not Path(self._filename).is_file():
+            logger.warning("Warning: File not exist, try to create one")
+            with open(self._filename, 'w') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=self._fields)
+                writer.writeheader()
 
-    def load(self, disable_create=False):
+    def load(self):
         """ Load csv to memory
 
         Paramaters:
             disable_create(bool) : disable file creation if not found
         """
-        self.__master = True
+        if self._check:
+            self._check_file()
 
-        if not disable_create:
-            self._ccreate_file()
-
-        self._records = []
         with open(self._filename, 'r') as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                new_data = type(self)()
-                for col, val in row.items():
-                    if not hasattr(new_data, col):
-                        raise ModelError("Attribute {} not found" % col)
-                    setattr(new_data, col, val)
-                self._records.append(new_data)
+            reader = csv.DictReader(csvfile, dialect=self._dialect)
+
+            # Check if file is empty
+            try:
+                frow = next(reader)
+            except StopIteration:
+                self._master_records = []
+                return
+
+            # Validate fields with the first row
+            invalid_fields = [fi for fi in self._fields if fi not in frow]
+            invalid_fields = ', '.join(invalid_fields)
+
+            if invalid_fields:
+                raise ModelError(
+                    "Attribute(s) %s not found in %s" %
+                    (invalid_fields,
+                     self._filename),
+                )
+
+            # Process the first row and the rest
+            type(self)._master_records = [
+                {col: val for col, val in row.items() if col in self._fields}
+                for row in [frow] + list(reader)
+            ]
 
     def save(self):
-        mode = 'w' if self.__master else 'a'
-
-        with open(self._filename, mode) as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=self._fields)
-            if self.__master:
-                writer.writeheader()
+        with open(self._filename, 'w') as csvfile:
+            writer = csv.DictWriter(
+                csvfile, fieldnames=self._fields, dialect=self._dialect)
+            writer.writeheader()
             for rec in self._records:
-                writer.writerow(rec.get_dict())
+                writer.writerow(rec)
 
-    # MISC METHOD
-    def _is_one(self):
-        return len(self._records) == 0
-
+    # MISC Methods
     def ensure_one(self):
-        if not self._is_one():
+        if len(self._records) > 1:
             raise ModelError("Model not singleton")
 
-    def get_dict(self):
-        res = {}
-        for f in self._fields:
-            res[f] = getattr(self, f)
-        return res
-
-    # CRUD METHOD
-    def get(self):
-        return self._records
-
+    # CRUD Methods
     def search(self, domain):
-        res = list()
-        for rec in self._records:
-            if domain(rec):
-                res.append(rec)
-        return res
+        if callable(domain):
+            res = [rec._records[0] for rec in self if domain(rec)]
+            return type(self)(res)
+        else:
+            raise NotImplementedError
 
     def read(self, id):
-        res = self.search(str(id))
-        return res[0]
+        return self[id]
 
-    def create(self, values):
-        new_data = type(self)()
-        for c, v in values.items():
-            if not hasattr(new_data, c):
+    def create(self, value: dict):
+        rec = {col: None for col in self._fields}
+        for c, v in value.items():
+            if c not in self._fields:
                 raise ModelError("Attribute {} not found" % c)
-            setattr(new_data, c, v)
-        self._records.append(new_data)
+            rec[c] = v
 
-    def update(self, domain=None, values={}):
-        if not domain:
+        type(self)._master_records.append(rec)
+        return self
+
+    def update(self, domain, value: dict):
+        if not domain and not self:
             raise ModelError("Domain is required")
-        for rec in self.search(domain):
-            for c, v in values.items():
-                if not hasattr(rec, c):
+
+        records = self.search(domain)
+        for rec in records:
+            for c, v in value.items():
+                if c not in self._fields:
                     raise ModelError("Attribute {} not found" % c)
-                setattr(rec, c, v)
+                rec[c] = v
 
-    def unlink(self, domain=None):
-        if not domain:
+        return records
+
+    def delete(self, domain=None):
+        if not domain and not self._records:
             raise ModelError("Domain is required")
-        for rec in self._records:
-            if domain(rec):
-                del rec
+        rec = self.search(domain) if self._records == [] else self
+        if not rec:
+            raise ModelError("No record found")
+        for d in rec:
+            del d
+
+    # OPERATOR Methods
+    def __eq__(self, other):
+        empty = self._records == []
+        return empty == other

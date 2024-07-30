@@ -1,55 +1,41 @@
 from datetime import date
-from .exceptions import ModelError
 
 
-# FIELD CLASS
 class Field:
     _type = str
-    _default = False
 
-    def __init__(self, **kwargs):
-        self._type = str
-        self._default = False
-        self._value = self._default
+    def __set_name__(self, owner, name):
+        self._name = name
 
-    def __get__(self, instance, owner):
-        if instance._is_master():
-            raise ModelError("Cannot get multiple records")
-        return self._value
+    def __get__(self, obj, objtype=None):
+        return self._type(obj._records[0][self._name])
 
-    def __set__(self, instance, value):
-        if instance._is_master():
-            raise ModelError("Cannot set multiple records")
+    def __set__(self, obj, value):
+        self._validate(obj, value)
+        obj._records[0][self._name] = self._type(value)
 
-        self._value = value
-
-    def __repr__(self):
-        val = self._type(self._value)
-        return f"{val}"
+    def _validate(self, obj, value):
+        """ Validate value
+        """
+        # Validate if object is singleton
+        assert obj.ensure_one()
 
 
-class Integer(Field, int):
+class Boolean(Field):
+    _type = bool
+
+
+class Integer(Field):
     _type = int
-    _default = 0
 
 
-class Float(Field, float):
+class Float(Field):
     _type = float
-    _default = 0.0
 
 
-class String(Field, str):
+class String(Field):
     _type = str
-    _default = False
 
 
 class Date(Field, date):
     _type = date
-    _default = date.today()
-
-    def __new__(cls, year=None, month=None, day=None,):
-        if not year:
-            self = cls._default
-        else:
-            self = super().__new__(year, month=None, day=None)
-        return self
