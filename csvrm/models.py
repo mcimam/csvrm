@@ -20,11 +20,13 @@ class Model:
 
     """
     # Class variable
+    _name = ''
     _filename = False  # csv file location
     _dialect = 'excel'  # csv dialect
     _check = True  # csv check
 
     _fields = list()  # list of fields
+    _field_maps = dict()  # map fields and class
     _master_records = list()  # master records
     _lock = False  # transaction lock
 
@@ -37,18 +39,20 @@ class Model:
         # This method is better to run in metaclass
         # Or when class is register even if instace is not created yet
 
-        # Set filename to abs path
-        self._filename = abspath(self._filename)
-
-        # Handle fields register
-        self._fields = list(map(lambda x: x[0], filter(
-            lambda x: issubclass(type(x[1]), Field),
-            list(type(self).__dict__.items())
-        )))
-
-        ########################################################
-
         if records is False:
+            # Initialize
+            # Set filename to abs path
+            type(self)._filename = abspath(self._filename)
+
+            # Handle fields register
+            type(self)._fields = [x[0] for x in type(
+                self).__dict__.items() if issubclass(type(x[1]), Field)]
+
+            # Register fields in it's class
+            type(self)._field_maps = {x[0]: x[1] for x in type(
+                self).__dict__.items() if issubclass(type(x[1]), Field)}
+
+            ########################################################
             # Load record as master
             # In this case _records is shallow copy of _master_records
             self.load()
@@ -58,6 +62,7 @@ class Model:
             self._records = records
 
     # DUNDER Methods
+
     def __iter__(self):
         for rec in self._records:
             yield type(self)([rec])
@@ -119,10 +124,15 @@ class Model:
                 )
 
             # Process the first row and the rest
-            type(self)._master_records = [
-                {col: val for col, val in row.items() if col in self._fields}
-                for row in [frow] + list(reader)
-            ]
+            arec = []
+            for row in [frow] + list(reader):
+                rec = {}
+                for col, val in row.items():
+                    if col in self._fields:
+                        rec[col] = self._field_maps[col]._convert_value(val)
+                arec.append(rec)
+
+            type(self)._master_records = arec
 
     def save(self):
         with open(self._filename, 'w') as csvfile:
